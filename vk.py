@@ -10,7 +10,7 @@ api_version = config.vk['api_version']
 confirmation_string = config.vk['confirmation_string']
 
 
-def parameters(self, **kwargs):
+def parameters(**kwargs):
     params = {
         'v': api_version,
         'access_token': bot_token
@@ -24,11 +24,30 @@ async def get_user_name(session, user_id):
 
     async with session.get(api_link + 'users.get',
                            params=get_user_params) as resp:
-            user = await resp.json()
-            logging.debug(user)
-            user = user['response'][0]
+        user = await resp.json()
+        logging.debug(user)
+        user = user['response'][0]
 
-            return user['first_name']
+        return user['first_name']
+
+
+async def get_group_name(session, group_id):
+    get_group_params = parameters(group_ids=group_id)
+
+    async with session.get(api_link + 'groups.getById',
+                           params=get_group_params) as resp:
+        group = await resp.json()
+        logging.debug(group)
+        group = group['response'][0]
+
+        return group['name']
+
+
+async def get_sender_name(session, sender_id):
+    if sender_id > 0:
+        return await get_user_name(session, sender_id)
+    elif sender_id < 0:
+        return await get_group_name(session, sender_id)
 
 
 def find_audio(message):
@@ -39,9 +58,9 @@ def find_audio(message):
             return None
 
 
-async def send_message(session, user_id, message_text):
+async def send_message(session, recipient_id, message_text):
     send_message_params = parameters(message=message_text,
-                                     user_id=user_id,
+                                     peer_id=recipient_id,
                                      random_id=randint(0, 2000000000))
 
     await session.get(api_link + 'messages.send',
@@ -49,8 +68,8 @@ async def send_message(session, user_id, message_text):
 
 
 async def handle_message(message, level=0, recipient_id=None):
-    user_id = message['from_id']
-    recipient_id = recipient_id or user_id
+    sender_id = message['from_id']
+    recipient_id = recipient_id or message['peer_id']
     text = message['text'] or '--'
     audio = find_audio(message)
 
@@ -59,8 +78,8 @@ async def handle_message(message, level=0, recipient_id=None):
         for inner_message in message.get('fwd_messages', []):
             await handle_message(inner_message, level + 1, recipient_id)
 
-        user_name = await get_user_name(session, user_id)
-        response_text = f'{"| "*level}{user_name}: {audio or text}'
+        sender_name = await get_sender_name(session, sender_id)
+        response_text = f'{"| "*level}{sender_name}: {audio or text}'
         await send_message(session, recipient_id, response_text)
 
 
