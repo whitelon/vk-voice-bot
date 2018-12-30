@@ -19,43 +19,37 @@ def parameters(**kwargs):
     return params
 
 
-async def get_user_name(session, user_id):
-    get_user_params = parameters(user_ids=user_id)
-
-    async with session.get(api_link + 'users.get',
-                           params=get_user_params) as resp:
-        user = await resp.json()
-        logging.debug(user)
-        user = user['response'][0]
-
-        return user['first_name']
-
-
-async def get_group_name(session, group_id):
-    get_group_params = parameters(group_ids=group_id)
-
-    async with session.get(api_link + 'groups.getById',
-                           params=get_group_params) as resp:
-        group = await resp.json()
-        logging.debug(group)
-        group = group['response'][0]
-
-        return group['name']
-
-
 async def get_sender_name(session, sender_id):
+
+    async def get_object_name(session, user_id,
+                              method, object_id_name, object_field_name):
+        user_query_params = parameters(**{object_id_name: user_id})
+
+        async with session.get(api_link + method,
+                               params=user_query_params) as resp:
+            user = await resp.json()
+            logging.debug(user)
+            user = user['response'][0]
+
+            return user[object_field_name]
+
     if sender_id > 0:
-        return await get_user_name(session, sender_id)
+        return await get_object_name(session, sender_id,
+                                     'users.get', 'user_id', 'first_name')
     elif sender_id < 0:
-        return await get_group_name(session, sender_id)
+        return await get_object_name(session, sender_id,
+                                     'groups.getById', 'group_id', 'name')
 
 
-def find_audio(message):
+async def recognize_audio(message, session):
+    from server import recognize
     if len(message['attachments']) > 0 and \
-       message['attachments'][0]['type'] == 'audio_message':
-            return message['attachments'][0]['audio_message']['link_ogg']
+            message['attachments'][0]['type'] == 'audio_message':
+        audio_link = message['attachments'][0]['audio_message']['link_ogg']
+        recognized_text = await recognize(audio_link, session)
+        return recognized_text
     else:
-            return None
+        return None
 
 
 async def send_message(session, recipient_id, message_text):
@@ -68,16 +62,16 @@ async def send_message(session, recipient_id, message_text):
 
 
 async def handle_message(message, level=0, recipient_id=None):
-    sender_id = message['from_id']
-    recipient_id = recipient_id or message['peer_id']
-    text = message['text'] or '--'
-    audio = find_audio(message)
 
     async with ClientSession() as session:
+        recipient_id = recipient_id or message['peer_id']
 
         for inner_message in message.get('fwd_messages', []):
             await handle_message(inner_message, level + 1, recipient_id)
 
+        sender_id = message['from_id']
+        text = message['text'] or '--'
+        audio = await recognize_audio(message, session)
         sender_name = await get_sender_name(session, sender_id)
         response_text = f'{"| "*level}{sender_name}: {audio or text}'
         await send_message(session, recipient_id, response_text)
